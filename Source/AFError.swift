@@ -123,6 +123,9 @@ public enum AFError: Error {
         case stringSerializationFailed(encoding: String.Encoding)
         case jsonSerializationFailed(error: Error)
         case propertyListSerializationFailed(error: Error)
+        case jsonDecodeFailed(error: Error)
+        case keyPathNotFound
+        case invalidEmptyResponse(type: String)
     }
 
     case invalidURL(url: URLConvertible)

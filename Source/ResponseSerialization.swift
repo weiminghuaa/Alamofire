@@ -711,5 +711,93 @@ extension DownloadRequest {
     }
 }
 
+// MARK: - Empty
+/// A protocol for a type representing an empty response. Use `T.emptyValue` to get an instance.
+public protocol EmptyResponse {
+    static func emptyValue() -> Self
+}
+
+/// A type representing an empty response. Use `Empty.value` to get the instance.
+public struct Empty: Decodable {
+    public static let value = Empty()
+}
+
+extension Empty: EmptyResponse {
+    public static func emptyValue() -> Empty {
+        return value
+    }
+}
+
+// MARK: - DataDecoder
+
+extension Request {
+    
+    public static func serializeResponseModel<T: Decodable>(type: T.Type, atKeyPath keyPath: String? = nil, response: HTTPURLResponse?, data: Data?, error: Error?) -> Result<T> {
+        guard error == nil else { return .failure(error!) }
+        
+        if let response = response, emptyDataStatusCodes.contains(response.statusCode) { // TODO: need test
+            guard let emptyResponseType = T.self as? EmptyResponse.Type, let emptyValue = emptyResponseType.emptyValue() as? T else {
+                return .failure(AFError.responseSerializationFailed(reason: .invalidEmptyResponse(type: "\(T.self)")))
+            }
+            
+            return .success(emptyValue)
+        }
+        
+        guard let validData = data else {
+            return .failure(AFError.responseSerializationFailed(reason: .inputDataNil))
+        }
+        
+        var jsonData = validData
+        
+        keyPathCheck: if let keyPath = keyPath {
+            do {
+                let json = try JSONSerialization.jsonObject(with: jsonData, options: JSONSerialization.ReadingOptions.allowFragments)
+                if let jsonDict = json as? [String: Any], let jsonObject = jsonDict[keyPath] {
+                    jsonData = try JSONSerialization.data(withJSONObject: jsonObject, options: [])
+                } else {
+                    return .failure(AFError.responseSerializationFailed(reason: .keyPathNotFound))
+                }
+            } catch {
+                return .failure(AFError.responseSerializationFailed(reason: .jsonSerializationFailed(error: error)))
+            }
+        }
+        
+        let jsonDecoder = JSONDecoder()
+        
+        do {
+            let t = try jsonDecoder.decode(T.self, from: jsonData)
+            return .success(t)
+        } catch {
+            return .failure(AFError.responseSerializationFailed(reason: .jsonDecodeFailed(error: error)))
+        }
+    }
+}
+
+extension DataRequest {
+    
+    public static func modelResponseSerializer<T: Decodable>(type: T.Type, atKeyPath keyPath: String? = nil) -> DataResponseSerializer<T> {
+        return DataResponseSerializer { _, response, data, error in
+            return Request.serializeResponseModel(type: type,
+                                                  atKeyPath: keyPath, response: response, data: data, error: error)
+        }
+    }
+    
+    @discardableResult
+    public func responseModel<T: Decodable>(
+        type: T.Type,
+        atKeyPath keyPath: String? = nil,
+        queue: DispatchQueue? = nil,
+        completionHandler: @escaping (DataResponse<T>) -> Void)
+        -> Self
+    {
+        return response(
+            queue: queue,
+            responseSerializer: DataRequest.modelResponseSerializer(type: type, atKeyPath: keyPath),
+            completionHandler: completionHandler
+        )
+    }
+    
+}
+
 /// A set of HTTP response status code that do not contain response data.
 private let emptyDataStatusCodes: Set<Int> = [204, 205]
